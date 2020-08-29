@@ -126,6 +126,7 @@ using namespace device_intrinsics;
 
 // This will match the seed 76261196830436 (not pack.png ofc)
 // Double match: 76261206560653 (almost 100% confirmed, sans very last bit of sand in first match)
+// Triple match: 76273693341674 (100% match)
 #define CHUNK_X 6
 #define CHUNK_Z -1
 
