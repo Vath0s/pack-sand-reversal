@@ -125,6 +125,7 @@ using namespace device_intrinsics;
 //Specifying where the (1 = dirt/grass, 0 = sand) is
 
 // This will match the seed 76261196830436 (not pack.png ofc)
+// Double match: 76261206560653 (almost 100% confirmed)
 #define CHUNK_X 6
 #define CHUNK_Z -1
 
@@ -140,6 +141,26 @@ __constant__ double LocalNoise2D[INNER_Z_END - INNER_Z_START + 1][INNER_X_END - 
 
 #define EARLY_RETURN (INNER_Z_END * 16 + INNER_X_END)
 
+
+#define CHUNK_X_2 6
+#define CHUNK_Z_2 -2
+
+#define INNER_X_START_2 0
+#define INNER_Z_START_2 6
+
+#define INNER_X_END_2 9
+#define INNER_Z_END_2 15
+
+__constant__ uint8_t DIRT_HEIGHT_2D_2[INNER_Z_END_2 - INNER_Z_START_2 + 1][INNER_X_END_2 - INNER_X_START_2 + 1] = {{0,15,15,15,15,15,15,15,15,15},
+                                                                                                                   {15,0,0,15,15,15,15,15,15,15},
+                                                                                                                   {0,15,15,0,15,15,15,15,15,15},
+                                                                                                                   {15,1,15,15,0,15,15,15,15,15},
+                                                                                                                   {15,15,0,15,15,0,15,15,15,15},
+                                                                                                                   {15,15,15,0,15,15,0,15,15,15},
+                                                                                                                   {0,15,15,15,15,0,0,15,15,15},
+                                                                                                                   {0,0,15,15,15,15,0,0,0,15},
+                                                                                                                   {15,15,0,0,15,15,15,0,15,0}};
+__constant__ double LocalNoise2D_2[INNER_Z_END_2 - INNER_Z_START_2 + 1][INNER_X_END_2 - INNER_X_START_2 + 1];
 /*
 //Old test: matches 104703450999364
 #define CHUNK_X 2
@@ -335,11 +356,93 @@ namespace noise { //region Simplex layer gen
     }
 
 
+    __device__ static inline void generateNormalPermutations_2(double *buffer, double x, double y, double z, int sizeX, int sizeY, int sizeZ, double noiseFactorX, double noiseFactorY, double noiseFactorZ, double octaveSize, Octave permutationTable) {
+        double octaveWidth = 1.0 / octaveSize;
+        int32_t i2 = -1;
+        double x1 = 0.0;
+        double x2 = 0.0;
+        double xx1 = 0.0;
+        double xx2 = 0.0;
+        double t;
+        double w;
+        int columnIndex = 0;
+        for (int X = 0; X < sizeX; X++) {
+            double xCoord = (x + (double) X) * noiseFactorX + permutationTable.xo;
+            auto clampedXcoord = (int32_t) xCoord;
+            if (xCoord < (double) clampedXcoord) {
+                clampedXcoord--;
+            }
+            auto xBottoms = (uint8_t) ((uint32_t) clampedXcoord & 0xffu);
+            xCoord -= clampedXcoord;
+            t = xCoord * 6 - 15;
+            w = (xCoord * t + 10);
+            double fadeX = xCoord * xCoord * xCoord * w;
+            for (int Z = 0; Z < sizeZ; Z++) {
+                double zCoord = permutationTable.zo;
+                auto clampedZCoord = (int32_t) zCoord;
+                if (zCoord < (double) clampedZCoord) {
+                    clampedZCoord--;
+                }
+                auto zBottoms = (uint8_t) ((uint32_t) clampedZCoord & 0xffu);
+                zCoord -= clampedZCoord;
+                t = zCoord * 6 - 15;
+                w = (zCoord * t + 10);
+                double fadeZ = zCoord * zCoord * zCoord * w;
+                for (int Y = 0; Y < sizeY; Y++) {
+                    double yCoords = (y + (double) Y) * noiseFactorY + permutationTable.yo;
+                    auto clampedYCoords = (int32_t) yCoords;
+                    if (yCoords < (double) clampedYCoords) {
+                        clampedYCoords--;
+                    }
+                    auto yBottoms = (uint8_t) ((uint32_t) clampedYCoords & 0xffu);
+                    yCoords -= clampedYCoords;
+                    t = yCoords * 6 - 15;
+                    w = yCoords * t + 10;
+                    double fadeY = yCoords * yCoords * yCoords * w;
+                    // ZCoord
+
+                    if (Y == 0 || yBottoms != i2) { // this is wrong on so many levels, same ybottoms doesnt mean x and z were the same...
+                        i2 = yBottoms;
+
+                        uint16_t k2 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)(xBottoms& 0xffu)] + yBottoms)& 0xffu)] + zBottoms;
+                        uint16_t l2 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)(xBottoms& 0xffu)] + yBottoms + 1u )& 0xffu)] + zBottoms;
+                        uint16_t k3 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)((xBottoms + 1u)& 0xffu)] + yBottoms )& 0xffu)] + zBottoms;
+                        uint16_t l3 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)((xBottoms + 1u)& 0xffu)] + yBottoms + 1u) & 0xffu)] + zBottoms;
+                        x1 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)(k2& 0xffu)], xCoord, yCoords, zCoord), grad(permutationTable.permutations[(uint8_t)(k3& 0xffu)], xCoord - 1.0, yCoords, zCoord));
+                        x2 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)(l2& 0xffu)], xCoord, yCoords - 1.0, zCoord), grad(permutationTable.permutations[(uint8_t)(l3& 0xffu)], xCoord - 1.0, yCoords - 1.0, zCoord));
+                        xx1 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)((k2+1u)& 0xffu)], xCoord, yCoords, zCoord - 1.0), grad(permutationTable.permutations[(uint8_t)((k3+1u)& 0xffu)], xCoord - 1.0, yCoords, zCoord - 1.0));
+                        xx2 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)((l2+1u)& 0xffu)], xCoord, yCoords - 1.0, zCoord - 1.0), grad(permutationTable.permutations[(uint8_t)((l3+1u)& 0xffu)], xCoord - 1.0, yCoords - 1.0, zCoord - 1.0));
+                    }
+
+                    if (columnIndex%16 >= INNER_X_START_2 && columnIndex%16 <= INNER_X_END_2 &&
+                        DIRT_HEIGHT_2D_2[columnIndex/16 - INNER_Z_START_2][columnIndex%16 - INNER_X_START_2] != 15){
+                        double y1 = lerp(fadeY, x1, x2);
+                        double y2 = lerp(fadeY, xx1, xx2);
+                        (buffer)[columnIndex] = (buffer)[columnIndex] + lerp(fadeZ, y1, y2) * octaveWidth;
+                    }
+                    
+                    columnIndex++;
+
+                }
+            }
+        }
+    }
+
+
     __device__ static inline void generateNoise(double *buffer, double chunkX, double chunkY, double chunkZ, int sizeX, int sizeY, int sizeZ, double offsetX, double offsetY, double offsetZ, Octave *permutationTable, int nbOctaves) {
         //memset(buffer, 0, sizeof(double) * sizeX * sizeZ * sizeY);
         double octavesFactor = 1.0;
         for (int octave = 0; octave < nbOctaves; octave++) {
             generateNormalPermutations(buffer, chunkX, chunkY, chunkZ, sizeX, sizeY, sizeZ, offsetX * octavesFactor, offsetY * octavesFactor, offsetZ * octavesFactor, octavesFactor, permutationTable[octave]);
+            octavesFactor /= 2.0;
+        }
+    }
+
+    __device__ static inline void generateNoise_2(double *buffer, double chunkX, double chunkY, double chunkZ, int sizeX, int sizeY, int sizeZ, double offsetX, double offsetY, double offsetZ, Octave *permutationTable, int nbOctaves) {
+        //memset(buffer, 0, sizeof(double) * sizeX * sizeZ * sizeY);
+        double octavesFactor = 1.0;
+        for (int octave = 0; octave < nbOctaves; octave++) {
+            generateNormalPermutations_2(buffer, chunkX, chunkY, chunkZ, sizeX, sizeY, sizeZ, offsetX * octavesFactor, offsetY * octavesFactor, offsetZ * octavesFactor, octavesFactor, permutationTable[octave]);
             octavesFactor /= 2.0;
         }
     }
@@ -375,12 +478,49 @@ __device__ static inline bool match(uint64_t seed) {
     return true;
 }
 
+__device__ static inline bool match2(uint64_t seed) {
+    seed = get_random(seed);
+    //SkipNoiseGen(16+16+8, &seed);
+    lcg::advance<10480>(seed);//VERY VERY DODGY
+    
+    Octave surfaceElevation[4];
+    setupNoise(4,(Random*)&seed,surfaceElevation);
+    
+    double heightField[256];
+    #pragma unroll
+    for(uint16_t i = 0; i<256;i++)
+        heightField[i] = 0;
+    
+    const double noiseFactor = 0.03125;
+    generateNoise_2(heightField, (double) (CHUNK_X_2 <<4), (double) (CHUNK_Z_2<<4), 0.0, 16, 16, 1, noiseFactor, noiseFactor, 1.0, surfaceElevation, 4);
+
+    for(uint8_t z = 0; z < INNER_Z_END_2 - INNER_Z_START_2 + 1; z++) {
+        for(uint8_t x = 0; x < INNER_X_END_2 - INNER_X_START_2 + 1; x++) {
+            if (DIRT_HEIGHT_2D_2[z][x] != 15) {
+                uint8_t dirty = heightField[INNER_X_START_2 + x + (INNER_Z_START_2 + z) * 16] + LocalNoise2D_2[z][x] * 0.2 > 0.0 ? 0 : 1;
+                if (dirty!=(int8_t)DIRT_HEIGHT_2D_2[z][x]) 
+                    return false;
+            }
+        }
+    }
+    return true;
+}
+
 
 __global__ __launch_bounds__(BLOCK_SIZE,2) static void tempCheck(uint32_t count, uint64_t* buffer) {
     uint64_t seedIndex = blockIdx.x * blockDim.x + threadIdx.x;
     if (seedIndex>=count)
         return;
     if (!match(buffer[seedIndex])) {
+        buffer[seedIndex] = 0;
+    }
+}
+
+__global__ __launch_bounds__(BLOCK_SIZE,2) static void tempCheck2(uint32_t count, uint64_t* buffer) {
+    uint64_t seedIndex = blockIdx.x * blockDim.x + threadIdx.x;
+    if (seedIndex>=count)
+        return;
+    if (!match2(buffer[seedIndex])) {
         buffer[seedIndex] = 0;
     }
 }
@@ -409,6 +549,16 @@ void setup(int gpu_device) {
     }
 
     GPU_ASSERT(cudaMemcpyToSymbol(LocalNoise2D, &locNoise2D, sizeof(locNoise2D)));
+    GPU_ASSERT(cudaPeekAtLastError());
+    
+    double locNoise2D_2[INNER_Z_END_2 - INNER_Z_START_2 + 1][INNER_X_END_2 - INNER_X_START_2 + 1];
+    for(uint8_t z = 0; z < INNER_Z_END_2 - INNER_Z_START_2 + 1; z++) {
+        for (uint8_t x = 0; x < INNER_X_END_2 - INNER_X_START_2 + 1; x++) {
+            locNoise2D_2[z][x] = getNextDoubleForLocNoise((CHUNK_X_2<<4) + INNER_X_START_2 + x, (CHUNK_Z_2<<4) + INNER_Z_START_2 + z);
+        }
+    }
+
+    GPU_ASSERT(cudaMemcpyToSymbol(LocalNoise2D_2, &locNoise2D_2, sizeof(locNoise2D_2)));
     GPU_ASSERT(cudaPeekAtLastError());
 }
 
@@ -445,31 +595,62 @@ int main(int argc, char *argv[]) {
     uint64_t seedCount = COUNT;
     std::cout << "Processing " << seedCount << " seeds" << std::endl;
 
+    std::vector<uint64_t> filtered_once;
+
     outSeeds.open("seedsout");
     GPU_ASSERT(cudaMallocManaged(&buffer, sizeof(*buffer) * SEEDS_PER_CALL));
     GPU_ASSERT(cudaPeekAtLastError());
+
+    int outCount = 0;
     for(uint64_t offset =0;offset<seedCount;offset+=SEEDS_PER_CALL) {
+        // Normal filtering
+
         for(uint64_t j = 0; j < SEEDS_PER_CALL; j++){
-            buffer[j] = offset + j;
+            buffer[j] = START + offset + j;
         }
+
         tempCheck<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(SEEDS_PER_CALL, buffer);
         GPU_ASSERT(cudaPeekAtLastError());
         GPU_ASSERT(cudaDeviceSynchronize());  
-        for(int i=0;i<sizeof(*buffer);i++) {
+
+        for(int i=0;i<SEEDS_PER_CALL;i++) {
             if (buffer[i]!=0) {
-                uint64_t seed = buffer[i];
-                std::cout << "Seed found:" << seed << std::endl;
-                outSeeds << seed << std::endl;
+                //std::cout << "1st level seed found: " << buffer[i] << std::endl;
+                filtered_once.push_back(buffer[i]);
             }
         }
+
+        std::cout << "1st level candidates: " << filtered_once.size() << std::endl;
+
+        if (filtered_once.size() >= SEEDS_PER_CALL || offset + SEEDS_PER_CALL >= seedCount) {
+            //2nd level of filtering
+            std::cout << "2nd level filtering" << std::endl;
+            int toCopy = filtered_once.size() > SEEDS_PER_CALL ? SEEDS_PER_CALL : filtered_once.size();
+
+            for(int i=0;i<toCopy;i++) {
+                buffer[i] = filtered_once.back();
+                //std::cout << "TRY: " << buffer[i] << std::endl;
+                filtered_once.pop_back();
+            }
+
+            tempCheck2<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(toCopy, buffer);
+            GPU_ASSERT(cudaPeekAtLastError());
+            GPU_ASSERT(cudaDeviceSynchronize());
+
+            for(int i=0;i<toCopy;i++) {
+                if (buffer[i]!=0) {
+                    uint64_t seed = buffer[i];
+                    std::cout << "2nd level seed found: " << seed << std::endl;
+                    outSeeds << seed << std::endl;
+                    outCount++;
+                }
+            }
+        }
+        
         std::cout << "Seeds left:" << seedCount - offset << std::endl;  
-    }   
-    std::cout << "Done processing" << std::endl;    
-    
+    }
 
-    int outCount = 0;
-
-    
+    std::cout << "Done processing" << std::endl;
     
     std::cout << "Have " << outCount << " output seeds" << std::endl;   
     outSeeds.close();
