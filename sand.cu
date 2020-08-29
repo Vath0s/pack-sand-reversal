@@ -12,7 +12,16 @@
 #include <fstream>
 #include <chrono>
 #include <mutex>
+#include <time.h>
 #include "lcg.h"
+
+#ifdef BOINC
+  #include "boinc_api.h"
+#if defined _WIN32 || defined _WIN64
+  #include "boinc_win.h"
+#endif
+#endif
+
 uint64_t millis() {return (std::chrono::duration_cast< std::chrono::milliseconds >(std::chrono::system_clock::now().time_since_epoch())).count();}
 
 
@@ -117,7 +126,7 @@ using namespace device_intrinsics;
 //#define BLOCK_SIZE (128)
 #define WORK_SIZE_BITS 15
 #define SEEDS_PER_CALL ((1ULL << (WORK_SIZE_BITS)) * (BLOCK_SIZE))
-
+//#define SEEDS_PER_CALL 8000000
 
 
 
@@ -725,12 +734,29 @@ int main2() {
     GPU_ASSERT(cudaDeviceSynchronize());
 }
 
+time_t elapsed_chkpoint = 0;
+struct checkpoint_vars {
+    unsigned long long offset;
+    time_t elapsed_chkpoint;
+    unsigned long long remaining;
+    unsigned long long vector1Size;
+    unsigned long long vector2Size;
+    };
 
 int main(int argc, char *argv[]) {
-
+    std::vector<uint64_t> filtered_once;
+    std::vector<uint64_t> filtered_twice;
     int gpu_device = 0;
     uint64_t START;
+    uint64_t offsetStart = 0;
     uint64_t COUNT;
+    uint64_t remaining;
+	#ifdef BOINC
+    BOINC_OPTIONS options;
+    boinc_options_defaults(options);
+	options.normal_thread_priority = true;
+    boinc_init_options(&options);
+    #endif
 	for (int i = 1; i < argc; i += 2) {
 		const char *param = argv[i];
 		if (strcmp(param, "-d") == 0 || strcmp(param, "--device") == 0) {
@@ -743,25 +769,91 @@ int main(int argc, char *argv[]) {
 			fprintf(stderr,"Unknown parameter: %s\n", param);
 		}
     }
+    FILE *checkpoint_data = boinc_fopen("packpoint.txt", "rb");
+    std::ifstream firstvector_data("vector1.txt");
+    std::ifstream secondvector_data("vector2.txt");
+
+    if(!checkpoint_data || !firstvector_data || !secondvector_data){
+        fprintf(stderr, "No checkpoint to load\n");
+
+    }
+    else{
+        #ifdef BOINC
+            boinc_begin_critical_section();
+        #endif
+
+        struct checkpoint_vars data_store;
+        fread(&data_store, sizeof(data_store), 1, checkpoint_data);
+        offsetStart = data_store.offset;
+        elapsed_chkpoint = data_store.elapsed_chkpoint;
+        remaining = data_store.remaining;
+        fprintf(stderr, "Checkpoint loaded, task time %d s, seed pos: %llu\n", elapsed_chkpoint, START);
+        fclose(checkpoint_data);
+        std::string str;
+        while(std::getline(firstvector_data, str)){
+            if(str.size() > 0){
+                std::istringstream iss(str);
+                uint64_t num1;
+                iss >> num1;
+                filtered_once.push_back(num1);
+            }
+        }
+        while(std::getline(secondvector_data, str)){
+            if(str.size() > 0){
+                std::istringstream iss(str);
+                uint64_t num1;
+                iss >> num1;
+                filtered_twice.push_back(num1);
+            }
+        }
+        firstvector_data.close();
+        secondvector_data.close();
+        std::cout << filtered_once.size() << std::endl;
+        std::cout << filtered_twice.size() << std::endl;
+        #ifdef BOINC
+            boinc_end_critical_section();
+        #endif
+    }
+	#ifdef BOINC
+	APP_INIT_DATA aid;
+	boinc_get_init_data(aid);
+	
+	if (aid.gpu_device_num >= 0) {
+		gpu_device = aid.gpu_device_num;
+		fprintf(stderr,"boinc gpu %i gpuindex: %i \n", aid.gpu_device_num, gpu_device);
+		} else {
+		fprintf(stderr,"stndalone gpuindex %i \n", gpu_device);
+	}
+	#endif
     setup(gpu_device);
     uint64_t seedCount = COUNT;
     std::cout << "Processing " << seedCount << " seeds" << std::endl;
-
-    std::vector<uint64_t> filtered_once;
-    std::vector<uint64_t> filtered_twice;
+    uint64_t upperBound;
+    if(remaining == 0){
+        upperBound = seedCount;
+        remaining = seedCount;
+    }
+    else
+        upperBound = remaining;
 
     outSeeds.open("seedsout");
     GPU_ASSERT(cudaMallocManaged(&buffer, sizeof(*buffer) * SEEDS_PER_CALL));
     GPU_ASSERT(cudaPeekAtLastError());
-
+    time_t start_time = time(NULL);
     int outCount = 0;
-    for(uint64_t offset =0;offset<seedCount;offset+=SEEDS_PER_CALL) {
-        // Normal filtering
 
+    int checkpointTemp = 0;
+    std::cout << upperBound << std::endl;
+    for(uint64_t offset =offsetStart;offset<seedCount;offset+=SEEDS_PER_CALL) {
+        // Normal filtering
+        time_t elapsed = time(NULL) - start_time;
+        double frac = (double) offset / (double)(START + seedCount);
+        #ifdef BOINC
+            boinc_fraction_done(frac);
+        #endif
         for(uint64_t j = 0; j < SEEDS_PER_CALL; j++){
             buffer[j] = START + offset + j;
         }
-
         tempCheck<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(SEEDS_PER_CALL, buffer);
         GPU_ASSERT(cudaPeekAtLastError());
         GPU_ASSERT(cudaDeviceSynchronize());  
@@ -825,23 +917,64 @@ int main(int argc, char *argv[]) {
                 }
             }
         }
-        
-        std::cout << "Seeds left:" << seedCount - offset << std::endl;  
+        if(checkpointTemp >= 180000000 || boinc_time_to_checkpoint()){
+            #ifdef BOINC
+		        boinc_begin_critical_section(); // Boinc should not interrupt this
+            #endif
+            // Checkpointing section below
+			boinc_delete_file("packpoint.txt"); // Don't touch, same func as normal fdel
+            FILE *checkpoint_data = boinc_fopen("packpoint.txt", "wb");
+            std::ofstream firstvector_data;
+            std::ofstream secondvector_data;
+            firstvector_data.open("vector1.txt");
+            secondvector_data.open("vector2.txt");
+			struct checkpoint_vars data_store;
+			data_store.offset = offset;
+			data_store.elapsed_chkpoint = elapsed_chkpoint + elapsed;
+            data_store.remaining = remaining;
+            data_store.vector1Size = filtered_once.size();
+            data_store.vector2Size = filtered_twice.size();
+            for(uint64_t i = 0; i < filtered_once.size(); i++){
+                firstvector_data << filtered_once[i] << std::endl;
+            }
+            for(uint64_t i = 0; i < filtered_twice.size(); i++){
+                secondvector_data << filtered_twice[i] << std::endl;
+            }
+            fwrite(&data_store, sizeof(data_store), 1, checkpoint_data);
+
+            fclose(checkpoint_data);
+            firstvector_data.close();
+            secondvector_data.close();
+            checkpointTemp = 0;
+            #ifdef BOINC
+            boinc_end_critical_section();
+            boinc_checkpoint_completed(); // Checkpointing completed
+            #endif
+        }
+        checkpointTemp += SEEDS_PER_CALL;
+        remaining -= SEEDS_PER_CALL;
+        std::cout << "Seeds left:" << remaining << std::endl;  
     }
 
-    std::cout << "Done processing" << std::endl;
-    
+    std::cout << "Done processing" << std::endl;    
+    #ifdef BOINC
+	    boinc_begin_critical_section();
+	#endif
+    time_t elapsed = time(NULL) - start_time;
+    double done = (double)COUNT / 1000000.0;
+    double speed = done / (double) elapsed;
+    fprintf(stderr, "\nSpeed: %.2lfm/s\n", speed );
+    fprintf(stderr, "Done\n");
+    fprintf(stderr, "Processed: %llu seeds in %.2lfs seconds\n", COUNT, (double) elapsed_chkpoint + (double) elapsed );
+    fflush(stderr);
     std::cout << "Have " << outCount << " output seeds" << std::endl;   
     outSeeds.close();
+    boinc_delete_file("packpoint.txt");
+    #ifdef BOINC
+        boinc_end_critical_section();
+    #endif
+    boinc_finish(0);
 }
-
-
-
-
-
-
-
-
 
 double getNextDoubleForLocNoise(int x, int z) {
     Random rand = get_random((((int64_t)x) >> 4) * 341873128712LL + (((int64_t)z) >> 4) * 132897987541LL);
@@ -865,31 +998,3 @@ double getNextDoubleForLocNoise(int x, int z) {
     }
     exit(-99);
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
