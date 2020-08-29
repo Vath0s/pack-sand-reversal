@@ -376,8 +376,8 @@ __device__ static inline bool match(uint64_t seed) {
 }
 
 
-__global__ __launch_bounds__(BLOCK_SIZE,2) static void tempCheck(uint64_t worldSeedOffset, uint32_t count, uint64_t* buffer) {
-    uint64_t seedIndex = blockIdx.x * blockDim.x + threadIdx.x + worldSeedOffset;
+__global__ __launch_bounds__(BLOCK_SIZE,2) static void tempCheck(uint32_t count, uint64_t* buffer) {
+    uint64_t seedIndex = blockIdx.x * blockDim.x + threadIdx.x;
     if (seedIndex>=count)
         return;
     if (!match(buffer[seedIndex])) {
@@ -396,8 +396,8 @@ std::ofstream outSeeds;
 uint64_t* buffer;
 
 double getNextDoubleForLocNoise(int x, int z);
-void setup() {
-    cudaSetDevice(0);
+void setup(int gpu_device) {
+    cudaSetDevice(gpu_device);
     GPU_ASSERT(cudaPeekAtLastError());
     GPU_ASSERT(cudaDeviceSynchronize());
     
@@ -413,56 +413,62 @@ void setup() {
 }
 
 int main2() {
-    setup();
+    setup(0);
     uint64_t seed = 167796511507956LLU;
     GPU_ASSERT(cudaMallocManaged(&buffer, sizeof(*buffer)));
     GPU_ASSERT(cudaPeekAtLastError());
     buffer[0] = seed;
-    tempCheck<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(0, 1, buffer);
+    tempCheck<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(1, buffer);
     GPU_ASSERT(cudaPeekAtLastError());
     GPU_ASSERT(cudaDeviceSynchronize());
 }
 
 
-int main() {
-    setup();
-    
-    inSeeds.open("SandWorldSeeds.txt");
-    std::vector<uint64_t> seeds;
-    uint64_t curr;
-    while (inSeeds >> curr)
-        seeds.push_back(curr);
-    inSeeds.close();
-    
-    const uint32_t seedCount = seeds.size();
+int main(int argc, char *argv[]) {
+
+    int gpu_device = 0;
+    uint64_t START;
+    uint64_t COUNT;
+	for (int i = 1; i < argc; i += 2) {
+		const char *param = argv[i];
+		if (strcmp(param, "-d") == 0 || strcmp(param, "--device") == 0) {
+			gpu_device = atoi(argv[i + 1]);
+		} else if (strcmp(param, "-s") == 0 || strcmp(param, "--start") == 0) {
+			sscanf(argv[i + 1], "%llu", &START);
+		} else if (strcmp(param, "-e") == 0 || strcmp(param, "--count") == 0) {
+			sscanf(argv[i + 1], "%llu", &COUNT);
+		} else {
+			fprintf(stderr,"Unknown parameter: %s\n", param);
+		}
+    }
+    setup(gpu_device);
+    uint64_t seedCount = COUNT;
     std::cout << "Processing " << seedCount << " seeds" << std::endl;
-    
-    GPU_ASSERT(cudaMallocManaged(&buffer, sizeof(*buffer) * seedCount));
+
+    outSeeds.open("seedsout");
+    GPU_ASSERT(cudaMallocManaged(&buffer, sizeof(*buffer) * SEEDS_PER_CALL));
     GPU_ASSERT(cudaPeekAtLastError());
-    
-    
-    for(int i=0;i<seedCount;i++)
-        buffer[i]=seeds[i];
-    
-    
     for(uint64_t offset =0;offset<seedCount;offset+=SEEDS_PER_CALL) {
-        tempCheck<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(offset, seedCount, buffer);
-        std::cout << "Seeds left:" << seedCount - offset << std::endl;
+        for(uint64_t j = 0; j < SEEDS_PER_CALL; j++){
+            buffer[j] = offset + j;
+        }
+        tempCheck<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(SEEDS_PER_CALL, buffer);
         GPU_ASSERT(cudaPeekAtLastError());
-        GPU_ASSERT(cudaDeviceSynchronize());    
+        GPU_ASSERT(cudaDeviceSynchronize());  
+        for(int i=0;i<sizeof(*buffer);i++) {
+            if (buffer[i]!=0) {
+                uint64_t seed = buffer[i];
+                std::cout << "Seed found:" << seed << std::endl;
+                outSeeds << seed << std::endl;
+            }
+        }
+        std::cout << "Seeds left:" << seedCount - offset << std::endl;  
     }   
     std::cout << "Done processing" << std::endl;    
     
-    outSeeds.open("seeds_sand_out.txt");
+
     int outCount = 0;
-    for(int i=0;i<seedCount;i++) {
-        if (buffer[i]!=0) {
-            uint64_t seed = buffer[i];
-            //std::cout << "Seed found:" << seed << std::endl;
-            outCount++;
-            outSeeds << seed << std::endl;
-        }
-    }
+
     
     
     std::cout << "Have " << outCount << " output seeds" << std::endl;   
