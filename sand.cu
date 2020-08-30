@@ -966,8 +966,8 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "\nSpeed: %.2lfm/s\n", speed );
     fprintf(stderr, "Done\n");
     fprintf(stderr, "Processed: %llu seeds in %.2lfs seconds\n", COUNT, (double) elapsed_chkpoint + (double) elapsed );
+    fprintf(stderr, "Have %llu output seeds.\n", outCount);
     fflush(stderr);
-    std::cout << "Have " << outCount << " output seeds" << std::endl;   
     outSeeds.close();
     boinc_delete_file("packpoint.txt");
     #ifdef BOINC
