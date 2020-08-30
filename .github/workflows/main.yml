@@ -22,7 +22,7 @@ jobs:
     - uses: actions/upload-artifact@v2
       with:
        name: chuwunk-win
-       path: .\chuwunk*.exe
+       path: .\chuwunk.exe
   linux_cuda:
     name: cuda/release/linux
     runs-on: [ubuntu-latest]

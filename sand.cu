@@ -847,7 +847,7 @@ int main(int argc, char *argv[]) {
     for(uint64_t offset =offsetStart;offset<seedCount;offset+=SEEDS_PER_CALL) {
         // Normal filtering
         time_t elapsed = time(NULL) - start_time;
-        double frac = (double) offset / (double)(START + seedCount);
+        double frac = (double) offset / (double)(seedCount);
         #ifdef BOINC
             boinc_fraction_done(frac);
         #endif
