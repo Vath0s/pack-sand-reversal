@@ -17,12 +17,12 @@ jobs:
         echo "##[add-path]C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\bin;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\include;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\lib\x64;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\extras\CUPTI\libx64;C:\Program Files\NVIDIA GPU Computing Toolkit\CUDA\v10.1\lib"
     - name: build
       run: |
-        nvcc sand.cu -o chuwunk.exe -O3 -m=64 -Xptxas -v -ID:\a\pack-sand-reversal\pack-sand-reversal\boinc\ -ID:\a\pack-sand-reversal\pack-sand-reversal\boinc\win\ -LD:\a\pack-sand-reversal\pack-sand-reversal\boinc\lib\win\ -lboinc_api -lboinc -lcuda -luser32 -DBOINC -D_WIN32
+        nvcc sand.cu -o packcrack.exe -O3 -m=64 -Xptxas -v -ID:\a\pack-sand-reversal\pack-sand-reversal\boinc\ -ID:\a\pack-sand-reversal\pack-sand-reversal\boinc\win\ -LD:\a\pack-sand-reversal\pack-sand-reversal\boinc\lib\win\ -lboinc_api -lboinc -lcuda -luser32 -DBOINC -D_WIN32
         dir
     - uses: actions/upload-artifact@v2
       with:
-       name: chuwunk-win
-       path: .\chuwunk.exe
+       name: packcrack-win
+       path: .\packcrack.exe
   linux_cuda:
     name: cuda/release/linux
     runs-on: [ubuntu-latest]
@@ -31,9 +31,9 @@ jobs:
     - uses: actions/checkout@v2
     - name: build
       run: |
-        nvcc sand.cu -Xcompiler -static-libgcc -Xcompiler -static-libstdc++ -m64 -O3 -o chuwunk -DBOINC -Iboinc/ -Lboinc/lib/lin -lcuda -lboinc_api -lboinc -Xptxas -v
+        nvcc sand.cu -Xcompiler -static-libgcc -Xcompiler -static-libstdc++ -m64 -O3 -o packcrack -DBOINC -Iboinc/ -Lboinc/lib/lin -lcuda -lboinc_api -lboinc -Xptxas -v
         ls -la
     - uses: actions/upload-artifact@v2
       with:
-       name: chuwunk-lin
-       path: ./chuwunk*
+       name: packcrack-lin
+       path: ./packcrack*
