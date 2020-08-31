@@ -1,6 +1,6 @@
 boinc_finish_called
 boinc_lockfile
-fil.*
+fil*
 packpoint.txt
 seedsout
 stderr.txt

@@ -694,7 +694,7 @@ __device__ static inline bool match3(uint64_t seed) {
 }
 
 
-__global__ __launch_bounds__(BLOCK_SIZE,2) static void tempCheck(uint64_t offset, uint64_t* buffer, uint64_t* counter) {
+__global__ __launch_bounds__(BLOCK_SIZE,2) static void tempCheck(uint64_t offset, uint64_t* buffer, uint32_t* counter) {
     uint64_t seed = blockIdx.x * blockDim.x + threadIdx.x + offset;
 
     if (match(seed)) {
@@ -729,7 +729,7 @@ std::ifstream inSeeds;
 std::ofstream outSeeds;
 
 uint64_t* buffer;
-uint64_t* counter;
+uint32_t* counter;
 
 double getNextDoubleForLocNoise(int x, int z);
 void setup(int gpu_device) {
