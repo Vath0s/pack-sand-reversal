@@ -715,7 +715,10 @@ __global__ __launch_bounds__(BLOCK_SIZE,2) static void tempCheck3(uint32_t count
     uint64_t seedIndex = blockIdx.x * blockDim.x + threadIdx.x;
     if (seedIndex>=count)
         return;
-    if (!match3(buffer[seedIndex])) {
+    uint64_t seed = buffer[seedIndex];
+    if (seed==0)
+        return;
+    if (!match3(seed)) {
         buffer[seedIndex] = 0;
     }
 }
@@ -773,13 +776,9 @@ time_t elapsed_chkpoint = 0;
 struct checkpoint_vars {
     unsigned long long offset;
     time_t elapsed_chkpoint;
-    unsigned long long vector1Size;
-    unsigned long long vector2Size;
-    };
+};
 
 int main(int argc, char *argv[]) {
-    std::vector<uint64_t> filtered_once;
-    std::vector<uint64_t> filtered_twice;
     int gpu_device = 0;
     uint64_t START;
     uint64_t offsetStart = 0;
@@ -803,10 +802,8 @@ int main(int argc, char *argv[]) {
 		}
     }
     FILE *checkpoint_data = boinc_fopen("packpoint.txt", "rb");
-    std::ifstream firstvector_data("vector1.txt");
-    std::ifstream secondvector_data("vector2.txt");
 
-    if(!checkpoint_data || !firstvector_data || !secondvector_data){
+    if(!checkpoint_data){
         fprintf(stderr, "No checkpoint to load\n");
 
     }
@@ -821,27 +818,6 @@ int main(int argc, char *argv[]) {
         elapsed_chkpoint = data_store.elapsed_chkpoint;
         fprintf(stderr, "Checkpoint loaded, task time %d s, seed pos: %llu\n", elapsed_chkpoint, START);
         fclose(checkpoint_data);
-        std::string str;
-        while(std::getline(firstvector_data, str)){
-            if(str.size() > 0){
-                std::istringstream iss(str);
-                uint64_t num1;
-                iss >> num1;
-                filtered_once.push_back(num1);
-            }
-        }
-        while(std::getline(secondvector_data, str)){
-            if(str.size() > 0){
-                std::istringstream iss(str);
-                uint64_t num1;
-                iss >> num1;
-                filtered_twice.push_back(num1);
-            }
-        }
-        firstvector_data.close();
-        secondvector_data.close();
-        std::cout << filtered_once.size() << std::endl;
-        std::cout << filtered_twice.size() << std::endl;
         #ifdef BOINC
             boinc_end_critical_section();
         #endif
@@ -881,64 +857,24 @@ int main(int argc, char *argv[]) {
         tempCheck<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(START + offset, buffer,counter);
         GPU_ASSERT(cudaPeekAtLastError());
         GPU_ASSERT(cudaDeviceSynchronize());  
-
+        
+        tempCheck2<<<((*counter)/BLOCK_SIZE)+1,BLOCK_SIZE>>>(*counter, buffer);
+        GPU_ASSERT(cudaPeekAtLastError());
+        GPU_ASSERT(cudaDeviceSynchronize());
+        
+        tempCheck3<<<((*counter)/BLOCK_SIZE)+1,BLOCK_SIZE>>>(*counter, buffer);
+        GPU_ASSERT(cudaPeekAtLastError());
+        GPU_ASSERT(cudaDeviceSynchronize());
+        
         for(int i=0;i<*counter;i++) {
-            filtered_once.push_back(buffer[i]);
-        }
-
-        //std::cout << "2nd level candidates: " << filtered_twice.size() << std::endl;
-		
-        if (filtered_once.size() >= SEEDS_PER_CALL || offset + SEEDS_PER_CALL >= seedCount) {
-            //2nd level of filtering
-            std::cout << "2nd level filtering" << std::endl;
-            int toCopy = filtered_once.size() > SEEDS_PER_CALL ? SEEDS_PER_CALL : filtered_once.size();
-
-            for(int i=0;i<toCopy;i++) {
-                buffer[i] = filtered_once.back();
-                //std::cout << "TRY: " << buffer[i] << std::endl;
-                filtered_once.pop_back();
-            }
-
-            tempCheck2<<<(toCopy/BLOCK_SIZE)+1,BLOCK_SIZE>>>(toCopy, buffer);
-            GPU_ASSERT(cudaPeekAtLastError());
-            GPU_ASSERT(cudaDeviceSynchronize());
-
-            for(int i=0;i<toCopy;i++) {
-                if (buffer[i]!=0) {
-                    uint64_t seed = buffer[i];
-                    //std::cout << "2nd level seed found: " << seed << std::endl;
-                    filtered_twice.push_back(seed);
-                    //outSeeds << seed << std::endl;
-                    //outCount++;
-                }
+            if (buffer[i]!=0) {
+                uint64_t seed = buffer[i];
+                std::cout << "3rd level seed found: " << seed << std::endl;
+                outSeeds << seed << std::endl;
+                outCount++;
             }
         }
 
-        if (filtered_twice.size() >= SEEDS_PER_CALL || offset + SEEDS_PER_CALL >= seedCount) {
-            //2nd level of filtering
-            std::cout << "3rd level filtering" << std::endl;
-            int toCopy = filtered_twice.size() > SEEDS_PER_CALL ? SEEDS_PER_CALL : filtered_twice.size();
-
-            for(int i=0;i<toCopy;i++) {
-                buffer[i] = filtered_twice.back();
-                //std::cout << "TRY: " << buffer[i] << std::endl;
-                filtered_twice.pop_back();
-            }
-
-            tempCheck3<<<(toCopy/BLOCK_SIZE)+1,BLOCK_SIZE>>>(toCopy, buffer);
-            GPU_ASSERT(cudaPeekAtLastError());
-            GPU_ASSERT(cudaDeviceSynchronize());
-
-            for(int i=0;i<toCopy;i++) {
-                if (buffer[i]!=0) {
-                    uint64_t seed = buffer[i];
-                    std::cout << "3rd level seed found: " << seed << std::endl;
-                    outSeeds << seed << std::endl;
-                    outCount++;
-                }
-            }
-        }
-		
         if(checkpointTemp >= 180000000 || boinc_time_to_checkpoint()){
             #ifdef BOINC
 		        boinc_begin_critical_section(); // Boinc should not interrupt this
@@ -946,26 +882,10 @@ int main(int argc, char *argv[]) {
             // Checkpointing section below
 			boinc_delete_file("packpoint.txt"); // Don't touch, same func as normal fdel
             FILE *checkpoint_data = boinc_fopen("packpoint.txt", "wb");
-            std::ofstream firstvector_data;
-            std::ofstream secondvector_data;
-            firstvector_data.open("vector1.txt");
-            secondvector_data.open("vector2.txt");
 			struct checkpoint_vars data_store;
 			data_store.offset = offset;
 			data_store.elapsed_chkpoint = elapsed_chkpoint + elapsed;
-            data_store.vector1Size = filtered_once.size();
-            data_store.vector2Size = filtered_twice.size();
-            for(uint64_t i = 0; i < filtered_once.size(); i++){
-                firstvector_data << filtered_once[i] << std::endl;
-            }
-            for(uint64_t i = 0; i < filtered_twice.size(); i++){
-                secondvector_data << filtered_twice[i] << std::endl;
-            }
-            fwrite(&data_store, sizeof(data_store), 1, checkpoint_data);
-
             fclose(checkpoint_data);
-            firstvector_data.close();
-            secondvector_data.close();
             checkpointTemp = 0;
             #ifdef BOINC
             boinc_end_critical_section();
