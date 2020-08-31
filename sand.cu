@@ -124,7 +124,7 @@ using namespace device_intrinsics;
 
 #define BLOCK_SIZE (128)
 //#define BLOCK_SIZE (128)
-#define WORK_SIZE_BITS 15
+#define WORK_SIZE_BITS 16
 #define SEEDS_PER_CALL ((1ULL << (WORK_SIZE_BITS)) * (BLOCK_SIZE))
 //#define SEEDS_PER_CALL 8000000
 
@@ -314,8 +314,27 @@ namespace noise { //region Simplex layer gen
     }
 
 
-    __device__ static inline void generateNormalPermutations(double *buffer, double x, double y, double z, int sizeX, int sizeY, int sizeZ, double noiseFactorX, double noiseFactorY, double noiseFactorZ, double octaveSize, Octave permutationTable) {
-        double octaveWidth = 1.0 / octaveSize;
+    __device__ static inline void generateNormalPermutations(double *buffer, double x, double y, double z, int sizeX, int sizeY, int sizeZ, double noiseFactorX, double noiseFactorY, double noiseFactorZ, double octaveSize, Random* random) {
+        double xo = lcg::next_double(*random) * 256.0;
+		double yo = lcg::next_double(*random) * 256.0;
+		double zo = lcg::next_double(*random) * 256.0;
+		//Setup the permutation fresh xD
+		#pragma unroll
+		for(int w = 0; w<256; w++) {
+			setValue(permutations, w, w);
+		}
+		for(int index = 0; index<256; index++) {
+			uint32_t randomIndex = lcg::dynamic_next_int(*random, 256ull - index) + index;
+			//if (randomIndex != index) {
+				// swap
+				uint8_t v1 = getValue(permutations,index);
+				uint8_t v2 = getValue(permutations,randomIndex);
+				setValue(permutations,index, v2);
+				setValue(permutations, randomIndex, v1);
+			//}
+		}
+		
+		double octaveWidth = 1.0 / octaveSize;
         int32_t i2 = -1;
         double x1 = 0.0;
         double x2 = 0.0;
@@ -325,7 +344,7 @@ namespace noise { //region Simplex layer gen
         double w;
         int columnIndex = 0;
         for (int X = 0; X < sizeX; X++) {
-            double xCoord = (x + (double) X) * noiseFactorX + permutationTable.xo;
+            double xCoord = (x + (double) X) * noiseFactorX + xo;
             auto clampedXcoord = (int32_t) xCoord;
             if (xCoord < (double) clampedXcoord) {
                 clampedXcoord--;
@@ -336,7 +355,7 @@ namespace noise { //region Simplex layer gen
             w = (xCoord * t + 10);
             double fadeX = xCoord * xCoord * xCoord * w;
             for (int Z = 0; Z < sizeZ; Z++) {
-                double zCoord = permutationTable.zo;
+                double zCoord = zo;
                 auto clampedZCoord = (int32_t) zCoord;
                 if (zCoord < (double) clampedZCoord) {
                     clampedZCoord--;
@@ -347,7 +366,7 @@ namespace noise { //region Simplex layer gen
                 w = (zCoord * t + 10);
                 double fadeZ = zCoord * zCoord * zCoord * w;
                 for (int Y = 0; Y < sizeY; Y++) {
-                    double yCoords = (y + (double) Y) * noiseFactorY + permutationTable.yo;
+                    double yCoords = (y + (double) Y) * noiseFactorY + yo;
                     auto clampedYCoords = (int32_t) yCoords;
                     if (yCoords < (double) clampedYCoords) {
                         clampedYCoords--;
@@ -360,17 +379,16 @@ namespace noise { //region Simplex layer gen
                     // ZCoord
 
                     if (Y == 0 || yBottoms != i2) { // this is wrong on so many levels, same ybottoms doesnt mean x and z were the same...
-                        i2 = yBottoms;
-
-                        uint16_t k2 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)(xBottoms& 0xffu)] + yBottoms)& 0xffu)] + zBottoms;
-                        uint16_t l2 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)(xBottoms& 0xffu)] + yBottoms + 1u )& 0xffu)] + zBottoms;
-                        uint16_t k3 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)((xBottoms + 1u)& 0xffu)] + yBottoms )& 0xffu)] + zBottoms;
-                        uint16_t l3 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)((xBottoms + 1u)& 0xffu)] + yBottoms + 1u) & 0xffu)] + zBottoms;
-                        x1 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)(k2& 0xffu)], xCoord, yCoords, zCoord), grad(permutationTable.permutations[(uint8_t)(k3& 0xffu)], xCoord - 1.0, yCoords, zCoord));
-                        x2 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)(l2& 0xffu)], xCoord, yCoords - 1.0, zCoord), grad(permutationTable.permutations[(uint8_t)(l3& 0xffu)], xCoord - 1.0, yCoords - 1.0, zCoord));
-                        xx1 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)((k2+1u)& 0xffu)], xCoord, yCoords, zCoord - 1.0), grad(permutationTable.permutations[(uint8_t)((k3+1u)& 0xffu)], xCoord - 1.0, yCoords, zCoord - 1.0));
-                        xx2 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)((l2+1u)& 0xffu)], xCoord, yCoords - 1.0, zCoord - 1.0), grad(permutationTable.permutations[(uint8_t)((l3+1u)& 0xffu)], xCoord - 1.0, yCoords - 1.0, zCoord - 1.0));
-                    }
+						i2 = yBottoms;
+						uint16_t k2 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)(xBottoms& 0xffu)) + yBottoms)& 0xffu)) + zBottoms;
+						uint16_t l2 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)(xBottoms& 0xffu)) + yBottoms + 1u )& 0xffu)) + zBottoms;
+						uint16_t k3 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)((xBottoms + 1u)& 0xffu)) + yBottoms )& 0xffu)) + zBottoms;
+						uint16_t l3 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)((xBottoms + 1u)& 0xffu)) + yBottoms + 1u) & 0xffu)) + zBottoms;
+						x1 = lerp(fadeX, grad(getValue(permutations,(uint8_t)(k2& 0xffu)), xCoord, yCoords, zCoord), grad(getValue(permutations,(uint8_t)(k3& 0xffu)), xCoord - 1.0, yCoords, zCoord));
+						x2 = lerp(fadeX, grad(getValue(permutations,(uint8_t)(l2& 0xffu)), xCoord, yCoords - 1.0, zCoord), grad(getValue(permutations,(uint8_t)(l3& 0xffu)), xCoord - 1.0, yCoords - 1.0, zCoord));
+						xx1 = lerp(fadeX, grad(getValue(permutations,(uint8_t)((k2+1u)& 0xffu)), xCoord, yCoords, zCoord - 1.0), grad(getValue(permutations,(uint8_t)((k3+1u)& 0xffu)), xCoord - 1.0, yCoords, zCoord - 1.0));
+						xx2 = lerp(fadeX, grad(getValue(permutations,(uint8_t)((l2+1u)& 0xffu)), xCoord, yCoords - 1.0, zCoord - 1.0), grad(getValue(permutations,(uint8_t)((l3+1u)& 0xffu)), xCoord - 1.0, yCoords - 1.0, zCoord - 1.0));
+					}
 
                     if (columnIndex%16 >= INNER_X_START && columnIndex%16 <= INNER_X_END &&
                         DIRT_HEIGHT_2D[columnIndex/16 - INNER_Z_START][columnIndex%16 - INNER_X_START] != 15){
@@ -389,8 +407,26 @@ namespace noise { //region Simplex layer gen
     }
 
 
-    __device__ static inline void generateNormalPermutations_2(double *buffer, double x, double y, double z, int sizeX, int sizeY, int sizeZ, double noiseFactorX, double noiseFactorY, double noiseFactorZ, double octaveSize, Octave permutationTable) {
-        double octaveWidth = 1.0 / octaveSize;
+    __device__ static inline void generateNormalPermutations_2(double *buffer, double x, double y, double z, int sizeX, int sizeY, int sizeZ, double noiseFactorX, double noiseFactorY, double noiseFactorZ, double octaveSize, Random* random) {
+        double xo = lcg::next_double(*random) * 256.0;
+		double yo = lcg::next_double(*random) * 256.0;
+		double zo = lcg::next_double(*random) * 256.0;
+		//Setup the permutation fresh xD
+		#pragma unroll
+		for(int w = 0; w<256; w++) {
+			setValue(permutations, w, w);
+		}
+		for(int index = 0; index<256; index++) {
+			uint32_t randomIndex = lcg::dynamic_next_int(*random, 256ull - index) + index;
+			//if (randomIndex != index) {
+				// swap
+				uint8_t v1 = getValue(permutations,index);
+				uint8_t v2 = getValue(permutations,randomIndex);
+				setValue(permutations,index, v2);
+				setValue(permutations, randomIndex, v1);
+			//}
+		}
+		double octaveWidth = 1.0 / octaveSize;
         int32_t i2 = -1;
         double x1 = 0.0;
         double x2 = 0.0;
@@ -400,7 +436,7 @@ namespace noise { //region Simplex layer gen
         double w;
         int columnIndex = 0;
         for (int X = 0; X < sizeX; X++) {
-            double xCoord = (x + (double) X) * noiseFactorX + permutationTable.xo;
+            double xCoord = (x + (double) X) * noiseFactorX + xo;
             auto clampedXcoord = (int32_t) xCoord;
             if (xCoord < (double) clampedXcoord) {
                 clampedXcoord--;
@@ -411,7 +447,7 @@ namespace noise { //region Simplex layer gen
             w = (xCoord * t + 10);
             double fadeX = xCoord * xCoord * xCoord * w;
             for (int Z = 0; Z < sizeZ; Z++) {
-                double zCoord = permutationTable.zo;
+                double zCoord = zo;
                 auto clampedZCoord = (int32_t) zCoord;
                 if (zCoord < (double) clampedZCoord) {
                     clampedZCoord--;
@@ -422,7 +458,7 @@ namespace noise { //region Simplex layer gen
                 w = (zCoord * t + 10);
                 double fadeZ = zCoord * zCoord * zCoord * w;
                 for (int Y = 0; Y < sizeY; Y++) {
-                    double yCoords = (y + (double) Y) * noiseFactorY + permutationTable.yo;
+                    double yCoords = (y + (double) Y) * noiseFactorY + yo;
                     auto clampedYCoords = (int32_t) yCoords;
                     if (yCoords < (double) clampedYCoords) {
                         clampedYCoords--;
@@ -435,17 +471,16 @@ namespace noise { //region Simplex layer gen
                     // ZCoord
 
                     if (Y == 0 || yBottoms != i2) { // this is wrong on so many levels, same ybottoms doesnt mean x and z were the same...
-                        i2 = yBottoms;
-
-                        uint16_t k2 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)(xBottoms& 0xffu)] + yBottoms)& 0xffu)] + zBottoms;
-                        uint16_t l2 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)(xBottoms& 0xffu)] + yBottoms + 1u )& 0xffu)] + zBottoms;
-                        uint16_t k3 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)((xBottoms + 1u)& 0xffu)] + yBottoms )& 0xffu)] + zBottoms;
-                        uint16_t l3 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)((xBottoms + 1u)& 0xffu)] + yBottoms + 1u) & 0xffu)] + zBottoms;
-                        x1 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)(k2& 0xffu)], xCoord, yCoords, zCoord), grad(permutationTable.permutations[(uint8_t)(k3& 0xffu)], xCoord - 1.0, yCoords, zCoord));
-                        x2 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)(l2& 0xffu)], xCoord, yCoords - 1.0, zCoord), grad(permutationTable.permutations[(uint8_t)(l3& 0xffu)], xCoord - 1.0, yCoords - 1.0, zCoord));
-                        xx1 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)((k2+1u)& 0xffu)], xCoord, yCoords, zCoord - 1.0), grad(permutationTable.permutations[(uint8_t)((k3+1u)& 0xffu)], xCoord - 1.0, yCoords, zCoord - 1.0));
-                        xx2 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)((l2+1u)& 0xffu)], xCoord, yCoords - 1.0, zCoord - 1.0), grad(permutationTable.permutations[(uint8_t)((l3+1u)& 0xffu)], xCoord - 1.0, yCoords - 1.0, zCoord - 1.0));
-                    }
+						i2 = yBottoms;
+						uint16_t k2 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)(xBottoms& 0xffu)) + yBottoms)& 0xffu)) + zBottoms;
+						uint16_t l2 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)(xBottoms& 0xffu)) + yBottoms + 1u )& 0xffu)) + zBottoms;
+						uint16_t k3 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)((xBottoms + 1u)& 0xffu)) + yBottoms )& 0xffu)) + zBottoms;
+						uint16_t l3 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)((xBottoms + 1u)& 0xffu)) + yBottoms + 1u) & 0xffu)) + zBottoms;
+						x1 = lerp(fadeX, grad(getValue(permutations,(uint8_t)(k2& 0xffu)), xCoord, yCoords, zCoord), grad(getValue(permutations,(uint8_t)(k3& 0xffu)), xCoord - 1.0, yCoords, zCoord));
+						x2 = lerp(fadeX, grad(getValue(permutations,(uint8_t)(l2& 0xffu)), xCoord, yCoords - 1.0, zCoord), grad(getValue(permutations,(uint8_t)(l3& 0xffu)), xCoord - 1.0, yCoords - 1.0, zCoord));
+						xx1 = lerp(fadeX, grad(getValue(permutations,(uint8_t)((k2+1u)& 0xffu)), xCoord, yCoords, zCoord - 1.0), grad(getValue(permutations,(uint8_t)((k3+1u)& 0xffu)), xCoord - 1.0, yCoords, zCoord - 1.0));
+						xx2 = lerp(fadeX, grad(getValue(permutations,(uint8_t)((l2+1u)& 0xffu)), xCoord, yCoords - 1.0, zCoord - 1.0), grad(getValue(permutations,(uint8_t)((l3+1u)& 0xffu)), xCoord - 1.0, yCoords - 1.0, zCoord - 1.0));
+					}
 
                     if (columnIndex%16 >= INNER_X_START_2 && columnIndex%16 <= INNER_X_END_2 &&
                         DIRT_HEIGHT_2D_2[columnIndex/16 - INNER_Z_START_2][columnIndex%16 - INNER_X_START_2] != 15){
@@ -461,8 +496,26 @@ namespace noise { //region Simplex layer gen
         }
     }
 
-    __device__ static inline void generateNormalPermutations_3(double *buffer, double x, double y, double z, int sizeX, int sizeY, int sizeZ, double noiseFactorX, double noiseFactorY, double noiseFactorZ, double octaveSize, Octave permutationTable) {
-        double octaveWidth = 1.0 / octaveSize;
+    __device__ static inline void generateNormalPermutations_3(double *buffer, double x, double y, double z, int sizeX, int sizeY, int sizeZ, double noiseFactorX, double noiseFactorY, double noiseFactorZ, double octaveSize, Random* random) {
+        double xo = lcg::next_double(*random) * 256.0;
+		double yo = lcg::next_double(*random) * 256.0;
+		double zo = lcg::next_double(*random) * 256.0;
+		//Setup the permutation fresh xD
+		#pragma unroll
+		for(int w = 0; w<256; w++) {
+			setValue(permutations, w, w);
+		}
+		for(int index = 0; index<256; index++) {
+			uint32_t randomIndex = lcg::dynamic_next_int(*random, 256ull - index) + index;
+			//if (randomIndex != index) {
+				// swap
+				uint8_t v1 = getValue(permutations,index);
+				uint8_t v2 = getValue(permutations,randomIndex);
+				setValue(permutations,index, v2);
+				setValue(permutations, randomIndex, v1);
+			//}
+		}
+		double octaveWidth = 1.0 / octaveSize;
         int32_t i2 = -1;
         double x1 = 0.0;
         double x2 = 0.0;
@@ -472,7 +525,7 @@ namespace noise { //region Simplex layer gen
         double w;
         int columnIndex = 0;
         for (int X = 0; X < sizeX; X++) {
-            double xCoord = (x + (double) X) * noiseFactorX + permutationTable.xo;
+            double xCoord = (x + (double) X) * noiseFactorX + xo;
             auto clampedXcoord = (int32_t) xCoord;
             if (xCoord < (double) clampedXcoord) {
                 clampedXcoord--;
@@ -483,7 +536,7 @@ namespace noise { //region Simplex layer gen
             w = (xCoord * t + 10);
             double fadeX = xCoord * xCoord * xCoord * w;
             for (int Z = 0; Z < sizeZ; Z++) {
-                double zCoord = permutationTable.zo;
+                double zCoord = zo;
                 auto clampedZCoord = (int32_t) zCoord;
                 if (zCoord < (double) clampedZCoord) {
                     clampedZCoord--;
@@ -494,7 +547,7 @@ namespace noise { //region Simplex layer gen
                 w = (zCoord * t + 10);
                 double fadeZ = zCoord * zCoord * zCoord * w;
                 for (int Y = 0; Y < sizeY; Y++) {
-                    double yCoords = (y + (double) Y) * noiseFactorY + permutationTable.yo;
+                    double yCoords = (y + (double) Y) * noiseFactorY + yo;
                     auto clampedYCoords = (int32_t) yCoords;
                     if (yCoords < (double) clampedYCoords) {
                         clampedYCoords--;
@@ -507,17 +560,16 @@ namespace noise { //region Simplex layer gen
                     // ZCoord
 
                     if (Y == 0 || yBottoms != i2) { // this is wrong on so many levels, same ybottoms doesnt mean x and z were the same...
-                        i2 = yBottoms;
-
-                        uint16_t k2 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)(xBottoms& 0xffu)] + yBottoms)& 0xffu)] + zBottoms;
-                        uint16_t l2 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)(xBottoms& 0xffu)] + yBottoms + 1u )& 0xffu)] + zBottoms;
-                        uint16_t k3 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)((xBottoms + 1u)& 0xffu)] + yBottoms )& 0xffu)] + zBottoms;
-                        uint16_t l3 = permutationTable.permutations[(uint8_t)((uint16_t)(permutationTable.permutations[(uint8_t)((xBottoms + 1u)& 0xffu)] + yBottoms + 1u) & 0xffu)] + zBottoms;
-                        x1 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)(k2& 0xffu)], xCoord, yCoords, zCoord), grad(permutationTable.permutations[(uint8_t)(k3& 0xffu)], xCoord - 1.0, yCoords, zCoord));
-                        x2 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)(l2& 0xffu)], xCoord, yCoords - 1.0, zCoord), grad(permutationTable.permutations[(uint8_t)(l3& 0xffu)], xCoord - 1.0, yCoords - 1.0, zCoord));
-                        xx1 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)((k2+1u)& 0xffu)], xCoord, yCoords, zCoord - 1.0), grad(permutationTable.permutations[(uint8_t)((k3+1u)& 0xffu)], xCoord - 1.0, yCoords, zCoord - 1.0));
-                        xx2 = lerp(fadeX, grad(permutationTable.permutations[(uint8_t)((l2+1u)& 0xffu)], xCoord, yCoords - 1.0, zCoord - 1.0), grad(permutationTable.permutations[(uint8_t)((l3+1u)& 0xffu)], xCoord - 1.0, yCoords - 1.0, zCoord - 1.0));
-                    }
+						i2 = yBottoms;
+						uint16_t k2 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)(xBottoms& 0xffu)) + yBottoms)& 0xffu)) + zBottoms;
+						uint16_t l2 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)(xBottoms& 0xffu)) + yBottoms + 1u )& 0xffu)) + zBottoms;
+						uint16_t k3 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)((xBottoms + 1u)& 0xffu)) + yBottoms )& 0xffu)) + zBottoms;
+						uint16_t l3 = getValue(permutations,(uint8_t)((uint16_t)(getValue(permutations,(uint8_t)((xBottoms + 1u)& 0xffu)) + yBottoms + 1u) & 0xffu)) + zBottoms;
+						x1 = lerp(fadeX, grad(getValue(permutations,(uint8_t)(k2& 0xffu)), xCoord, yCoords, zCoord), grad(getValue(permutations,(uint8_t)(k3& 0xffu)), xCoord - 1.0, yCoords, zCoord));
+						x2 = lerp(fadeX, grad(getValue(permutations,(uint8_t)(l2& 0xffu)), xCoord, yCoords - 1.0, zCoord), grad(getValue(permutations,(uint8_t)(l3& 0xffu)), xCoord - 1.0, yCoords - 1.0, zCoord));
+						xx1 = lerp(fadeX, grad(getValue(permutations,(uint8_t)((k2+1u)& 0xffu)), xCoord, yCoords, zCoord - 1.0), grad(getValue(permutations,(uint8_t)((k3+1u)& 0xffu)), xCoord - 1.0, yCoords, zCoord - 1.0));
+						xx2 = lerp(fadeX, grad(getValue(permutations,(uint8_t)((l2+1u)& 0xffu)), xCoord, yCoords - 1.0, zCoord - 1.0), grad(getValue(permutations,(uint8_t)((l3+1u)& 0xffu)), xCoord - 1.0, yCoords - 1.0, zCoord - 1.0));
+					}
 
                     if (columnIndex%16 >= INNER_X_START_3 && columnIndex%16 <= INNER_X_END_3 &&
                         DIRT_HEIGHT_2D_3[columnIndex/16 - INNER_Z_START_3][columnIndex%16 - INNER_X_START_3] != 15){
@@ -534,29 +586,29 @@ namespace noise { //region Simplex layer gen
     }
 
 
-    __device__ static inline void generateNoise(double *buffer, double chunkX, double chunkY, double chunkZ, int sizeX, int sizeY, int sizeZ, double offsetX, double offsetY, double offsetZ, Octave *permutationTable, int nbOctaves) {
+    __device__ static inline void generateNoise(double *buffer, double chunkX, double chunkY, double chunkZ, int sizeX, int sizeY, int sizeZ, double offsetX, double offsetY, double offsetZ, Random random, int nbOctaves) {
         //memset(buffer, 0, sizeof(double) * sizeX * sizeZ * sizeY);
         double octavesFactor = 1.0;
         for (int octave = 0; octave < nbOctaves; octave++) {
-            generateNormalPermutations(buffer, chunkX, chunkY, chunkZ, sizeX, sizeY, sizeZ, offsetX * octavesFactor, offsetY * octavesFactor, offsetZ * octavesFactor, octavesFactor, permutationTable[octave]);
+            generateNormalPermutations(buffer, chunkX, chunkY, chunkZ, sizeX, sizeY, sizeZ, offsetX * octavesFactor, offsetY * octavesFactor, offsetZ * octavesFactor, octavesFactor, &random);
             octavesFactor /= 2.0;
         }
     }
 
-    __device__ static inline void generateNoise_2(double *buffer, double chunkX, double chunkY, double chunkZ, int sizeX, int sizeY, int sizeZ, double offsetX, double offsetY, double offsetZ, Octave *permutationTable, int nbOctaves) {
+    __device__ static inline void generateNoise_2(double *buffer, double chunkX, double chunkY, double chunkZ, int sizeX, int sizeY, int sizeZ, double offsetX, double offsetY, double offsetZ, Random random, int nbOctaves) {
         //memset(buffer, 0, sizeof(double) * sizeX * sizeZ * sizeY);
         double octavesFactor = 1.0;
         for (int octave = 0; octave < nbOctaves; octave++) {
-            generateNormalPermutations_2(buffer, chunkX, chunkY, chunkZ, sizeX, sizeY, sizeZ, offsetX * octavesFactor, offsetY * octavesFactor, offsetZ * octavesFactor, octavesFactor, permutationTable[octave]);
+            generateNormalPermutations_2(buffer, chunkX, chunkY, chunkZ, sizeX, sizeY, sizeZ, offsetX * octavesFactor, offsetY * octavesFactor, offsetZ * octavesFactor, octavesFactor, &random);
             octavesFactor /= 2.0;
         }
     }
 
-    __device__ static inline void generateNoise_3(double *buffer, double chunkX, double chunkY, double chunkZ, int sizeX, int sizeY, int sizeZ, double offsetX, double offsetY, double offsetZ, Octave *permutationTable, int nbOctaves) {
+    __device__ static inline void generateNoise_3(double *buffer, double chunkX, double chunkY, double chunkZ, int sizeX, int sizeY, int sizeZ, double offsetX, double offsetY, double offsetZ, Random random, int nbOctaves) {
         //memset(buffer, 0, sizeof(double) * sizeX * sizeZ * sizeY);
         double octavesFactor = 1.0;
         for (int octave = 0; octave < nbOctaves; octave++) {
-            generateNormalPermutations_3(buffer, chunkX, chunkY, chunkZ, sizeX, sizeY, sizeZ, offsetX * octavesFactor, offsetY * octavesFactor, offsetZ * octavesFactor, octavesFactor, permutationTable[octave]);
+            generateNormalPermutations_3(buffer, chunkX, chunkY, chunkZ, sizeX, sizeY, sizeZ, offsetX * octavesFactor, offsetY * octavesFactor, offsetZ * octavesFactor, octavesFactor, &random);
             octavesFactor /= 2.0;
         }
     }
@@ -569,8 +621,6 @@ __device__ static inline bool match(uint64_t seed) {
     //SkipNoiseGen(16+16+8, &seed);
     lcg::advance<10480>(seed);//VERY VERY DODGY
     
-    Octave surfaceElevation[4];
-    setupNoise(4,(Random*)&seed,surfaceElevation);
     
     double heightField[EARLY_RETURN+1];
     #pragma unroll
@@ -578,7 +628,7 @@ __device__ static inline bool match(uint64_t seed) {
         heightField[i] = 0;
     
     const double noiseFactor = 0.03125;
-    generateNoise(heightField, (double) (CHUNK_X <<4), (double) (CHUNK_Z<<4), 0.0, 16, 16, 1, noiseFactor, noiseFactor, 1.0, surfaceElevation, 4);
+    generateNoise(heightField, (double) (CHUNK_X <<4), (double) (CHUNK_Z<<4), 0.0, 16, 16, 1, noiseFactor, noiseFactor, 1.0, seed, 4);
 
     for(uint8_t z = 0; z < INNER_Z_END - INNER_Z_START + 1; z++) {
         for(uint8_t x = 0; x < INNER_X_END - INNER_X_START + 1; x++) {
@@ -597,16 +647,13 @@ __device__ static inline bool match2(uint64_t seed) {
     //SkipNoiseGen(16+16+8, &seed);
     lcg::advance<10480>(seed);//VERY VERY DODGY
     
-    Octave surfaceElevation[4];
-    setupNoise(4,(Random*)&seed,surfaceElevation);
-    
     double heightField[256];
     #pragma unroll
     for(uint16_t i = 0; i<256;i++)
         heightField[i] = 0;
     
     const double noiseFactor = 0.03125;
-    generateNoise_2(heightField, (double) (CHUNK_X_2 <<4), (double) (CHUNK_Z_2<<4), 0.0, 16, 16, 1, noiseFactor, noiseFactor, 1.0, surfaceElevation, 4);
+    generateNoise_2(heightField, (double) (CHUNK_X_2 <<4), (double) (CHUNK_Z_2<<4), 0.0, 16, 16, 1, noiseFactor, noiseFactor, 1.0, seed, 4);
 
     for(uint8_t z = 0; z < INNER_Z_END_2 - INNER_Z_START_2 + 1; z++) {
         for(uint8_t x = 0; x < INNER_X_END_2 - INNER_X_START_2 + 1; x++) {
@@ -625,8 +672,6 @@ __device__ static inline bool match3(uint64_t seed) {
     //SkipNoiseGen(16+16+8, &seed);
     lcg::advance<10480>(seed);//VERY VERY DODGY
     
-    Octave surfaceElevation[4];
-    setupNoise(4,(Random*)&seed,surfaceElevation);
     
     double heightField[256];
     #pragma unroll
@@ -634,7 +679,7 @@ __device__ static inline bool match3(uint64_t seed) {
         heightField[i] = 0;
     
     const double noiseFactor = 0.03125;
-    generateNoise_3(heightField, (double) (CHUNK_X_3 <<4), (double) (CHUNK_Z_3<<4), 0.0, 16, 16, 1, noiseFactor, noiseFactor, 1.0, surfaceElevation, 4);
+    generateNoise_3(heightField, (double) (CHUNK_X_3 <<4), (double) (CHUNK_Z_3<<4), 0.0, 16, 16, 1, noiseFactor, noiseFactor, 1.0, seed, 4);
 
     for(uint8_t z = 0; z < INNER_Z_END_3 - INNER_Z_START_3 + 1; z++) {
         for(uint8_t x = 0; x < INNER_X_END_3 - INNER_X_START_3 + 1; x++) {
@@ -649,12 +694,11 @@ __device__ static inline bool match3(uint64_t seed) {
 }
 
 
-__global__ __launch_bounds__(BLOCK_SIZE,2) static void tempCheck(uint32_t count, uint64_t* buffer) {
-    uint64_t seedIndex = blockIdx.x * blockDim.x + threadIdx.x;
-    if (seedIndex>=count)
-        return;
-    if (!match(buffer[seedIndex])) {
-        buffer[seedIndex] = 0;
+__global__ __launch_bounds__(BLOCK_SIZE,2) static void tempCheck(uint64_t offset, uint64_t* buffer, uint64_t* counter) {
+    uint64_t seed = blockIdx.x * blockDim.x + threadIdx.x + offset;
+
+    if (match(seed)) {
+        buffer[atomicAdd(counter,1)] = seed;
     }
 }
 
@@ -685,6 +729,7 @@ std::ifstream inSeeds;
 std::ofstream outSeeds;
 
 uint64_t* buffer;
+uint64_t* counter;
 
 double getNextDoubleForLocNoise(int x, int z);
 void setup(int gpu_device) {
@@ -723,22 +768,11 @@ void setup(int gpu_device) {
     GPU_ASSERT(cudaPeekAtLastError());
 }
 
-int main2() {
-    setup(0);
-    uint64_t seed = 167796511507956LLU;
-    GPU_ASSERT(cudaMallocManaged(&buffer, sizeof(*buffer)));
-    GPU_ASSERT(cudaPeekAtLastError());
-    buffer[0] = seed;
-    tempCheck<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(1, buffer);
-    GPU_ASSERT(cudaPeekAtLastError());
-    GPU_ASSERT(cudaDeviceSynchronize());
-}
 
 time_t elapsed_chkpoint = 0;
 struct checkpoint_vars {
     unsigned long long offset;
     time_t elapsed_chkpoint;
-    unsigned long long remaining;
     unsigned long long vector1Size;
     unsigned long long vector2Size;
     };
@@ -750,7 +784,6 @@ int main(int argc, char *argv[]) {
     uint64_t START;
     uint64_t offsetStart = 0;
     uint64_t COUNT;
-    uint64_t remaining;
 	#ifdef BOINC
     BOINC_OPTIONS options;
     boinc_options_defaults(options);
@@ -786,7 +819,6 @@ int main(int argc, char *argv[]) {
         fread(&data_store, sizeof(data_store), 1, checkpoint_data);
         offsetStart = data_store.offset;
         elapsed_chkpoint = data_store.elapsed_chkpoint;
-        remaining = data_store.remaining;
         fprintf(stderr, "Checkpoint loaded, task time %d s, seed pos: %llu\n", elapsed_chkpoint, START);
         fclose(checkpoint_data);
         std::string str;
@@ -828,22 +860,16 @@ int main(int argc, char *argv[]) {
     setup(gpu_device);
     uint64_t seedCount = COUNT;
     std::cout << "Processing " << seedCount << " seeds" << std::endl;
-    uint64_t upperBound;
-    if(remaining == 0){
-        upperBound = seedCount;
-        remaining = seedCount;
-    }
-    else
-        upperBound = remaining;
 
     outSeeds.open("seedsout");
     GPU_ASSERT(cudaMallocManaged(&buffer, sizeof(*buffer) * SEEDS_PER_CALL));
+    GPU_ASSERT(cudaPeekAtLastError());
+    GPU_ASSERT(cudaMallocManaged(&counter, sizeof(*counter)));
     GPU_ASSERT(cudaPeekAtLastError());
     time_t start_time = time(NULL);
     int outCount = 0;
 
     int checkpointTemp = 0;
-    std::cout << upperBound << std::endl;
     for(uint64_t offset =offsetStart;offset<seedCount;offset+=SEEDS_PER_CALL) {
         // Normal filtering
         time_t elapsed = time(NULL) - start_time;
@@ -851,22 +877,17 @@ int main(int argc, char *argv[]) {
         #ifdef BOINC
             boinc_fraction_done(frac);
         #endif
-        for(uint64_t j = 0; j < SEEDS_PER_CALL; j++){
-            buffer[j] = START + offset + j;
-        }
-        tempCheck<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(SEEDS_PER_CALL, buffer);
+        *counter = 0;
+        tempCheck<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(START + offset, buffer,counter);
         GPU_ASSERT(cudaPeekAtLastError());
         GPU_ASSERT(cudaDeviceSynchronize());  
 
-        for(int i=0;i<SEEDS_PER_CALL;i++) {
-            if (buffer[i]!=0) {
-                //std::cout << "1st level seed found: " << buffer[i] << std::endl;
-                filtered_once.push_back(buffer[i]);
-            }
+        for(int i=0;i<*counter;i++) {
+            filtered_once.push_back(buffer[i]);
         }
 
         //std::cout << "2nd level candidates: " << filtered_twice.size() << std::endl;
-
+		
         if (filtered_once.size() >= SEEDS_PER_CALL || offset + SEEDS_PER_CALL >= seedCount) {
             //2nd level of filtering
             std::cout << "2nd level filtering" << std::endl;
@@ -878,7 +899,7 @@ int main(int argc, char *argv[]) {
                 filtered_once.pop_back();
             }
 
-            tempCheck2<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(toCopy, buffer);
+            tempCheck2<<<(toCopy/BLOCK_SIZE)+1,BLOCK_SIZE>>>(toCopy, buffer);
             GPU_ASSERT(cudaPeekAtLastError());
             GPU_ASSERT(cudaDeviceSynchronize());
 
@@ -904,7 +925,7 @@ int main(int argc, char *argv[]) {
                 filtered_twice.pop_back();
             }
 
-            tempCheck3<<<1ULL<<WORK_SIZE_BITS,BLOCK_SIZE>>>(toCopy, buffer);
+            tempCheck3<<<(toCopy/BLOCK_SIZE)+1,BLOCK_SIZE>>>(toCopy, buffer);
             GPU_ASSERT(cudaPeekAtLastError());
             GPU_ASSERT(cudaDeviceSynchronize());
 
@@ -917,6 +938,7 @@ int main(int argc, char *argv[]) {
                 }
             }
         }
+		
         if(checkpointTemp >= 180000000 || boinc_time_to_checkpoint()){
             #ifdef BOINC
 		        boinc_begin_critical_section(); // Boinc should not interrupt this
@@ -931,7 +953,6 @@ int main(int argc, char *argv[]) {
 			struct checkpoint_vars data_store;
 			data_store.offset = offset;
 			data_store.elapsed_chkpoint = elapsed_chkpoint + elapsed;
-            data_store.remaining = remaining;
             data_store.vector1Size = filtered_once.size();
             data_store.vector2Size = filtered_twice.size();
             for(uint64_t i = 0; i < filtered_once.size(); i++){
@@ -952,8 +973,7 @@ int main(int argc, char *argv[]) {
             #endif
         }
         checkpointTemp += SEEDS_PER_CALL;
-        remaining -= SEEDS_PER_CALL;
-        std::cout << "Seeds left:" << remaining << std::endl;  
+        std::cout << "Seeds left:" << (((int64_t)seedCount-offset)-SEEDS_PER_CALL) << std::endl;  
     }
 
     std::cout << "Done processing" << std::endl;    
